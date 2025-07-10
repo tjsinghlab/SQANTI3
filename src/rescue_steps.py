@@ -4,11 +4,12 @@ import sys
 
 import pandas as pd
 
+from src.utilities.clean_sam_header import clean_sam_header
 from src.utilities.rescue.rescue_by_mapping_rules import rescue_rules
 from src.wrapper_utils import (sqanti_path)
 from src.module_logging import rescue_logger, message
 from src.commands import (
-    RSCRIPTPATH, utilitiesPath, run_command ,
+    RSCRIPTPATH, utilitiesPath, run_command,
     PYTHONPATH, RSCRIPT_RESCUE_RULES, RSCRIPT_RESCUE_ML, RESCUE_RANDOM_FOREST
 )
 from src.utilities.rescue.automatic_rescue import (
@@ -95,7 +96,7 @@ def rescue_candidates(classification_file, monoexons, prefix):
         )
     ]
 
-    # ✅ NEW: Filter monoexonic transcripts if requested
+    # Filter monoexonic transcripts if requested
     if monoexons != 'all':
         if not rescue_candidates.empty and 'exons' in rescue_candidates.columns:
             rescue_candidates = rescue_candidates[rescue_candidates['exons'] > 1]
@@ -134,74 +135,70 @@ def rescue_targets(classification_file,rescue_candidates,ref_gtf,prefix):
     return rescue_targets.tolist()
 
 ## Run mapping of rescue candidates (artifacts) to targets
-def run_candidate_mapping(ref_trans_fasta,targets_list,candidates_list,
+def run_candidate_mapping(ref_trans_fasta, targets_list, candidates_list,
                           corrected_isoforms, out_dir, out_prefix):
     prefix = f"{out_dir}/{out_prefix}"
+
     #### PREPARATION OF FILES FOR MINIMAP2 ####
     message("Preparation of files for artifact mapping:", rescue_logger)
     targets_fasta = f"{prefix}_rescue_targets.fasta"
     candidates_fasta = f"{prefix}_rescue_candidates.fasta"
 
-
-
-    ## Filter reference transcriptome FASTA to only include target ref transcripts
+    # Filter reference transcriptome FASTA to only include target ref transcripts
     rescue_logger.info("Filtering reference transcriptome FASTA to only rescue targets.")
+    ref_targets = filter_transcriptome(ref_trans_fasta, targets_list)
 
-    # make file names
-    ref_targets = filter_transcriptome(ref_trans_fasta,targets_list)
-
-    ## Filter SQ3 transcriptome FASTA to only include target LR transcripts
+    # Filter SQ3 transcriptome FASTA to only include rescue targets (long reads)
     rescue_logger.info("Filtering supplied long read transcriptome FASTA (--isoforms) to only include rescue targets...")
+    LR_targets = filter_transcriptome(corrected_isoforms, targets_list)
 
-    # make file names
-    LR_targets = filter_transcriptome(corrected_isoforms,targets_list)
-
-    ## join both FASTA files
+    # Join both FASTA files and save
     all_targets = ref_targets + LR_targets
-    save_fasta(all_targets,targets_fasta)
+    save_fasta(all_targets, targets_fasta)
 
-    ## Filter SQ3 FASTA to include rescue candidates
+    # Filter SQ3 FASTA to include rescue candidates
     rescue_logger.info("Creating rescue candidate FASTA from supplied long read transcriptome fasta (--isoforms)...")
+    candidate_filt = filter_transcriptome(corrected_isoforms, candidates_list)
+    save_fasta(candidate_filt, candidates_fasta)
 
-    # make file names
-    candidate_filt = filter_transcriptome(corrected_isoforms,candidates_list)
-    save_fasta(candidate_filt,candidates_fasta)
-    
     #### MAPPING ARTIFACTS (CANDIDATES) WITH MINIMAP2 ####
-    # TODO: eliminate file logic in the process
-    message("Artifact mapping (candidates vs targets)",rescue_logger)
-    
-    # Mapping
+    message("Artifact mapping (candidates vs targets)", rescue_logger)
     rescue_logger.info("Mapping rescue candidates to rescue targets with minimap2...")
 
-    # make file names
+    # Define file names
     sam_file = f"{prefix}_mapped_rescue.sam"
+    sam_file_clean = sam_file.replace(".sam", "_clean.sam")
 
-    # make command
+    # Construct minimap2 command
     minimap_cmd = f"minimap2 --secondary=yes -ax map-hifi {targets_fasta} {candidates_fasta} > {sam_file}"
 
-    # run
-    logFile=f"{out_dir}/logs/rescue/minimap2.log"
-    run_command(minimap_cmd,rescue_logger,logFile,"Mapping rescue candidates to targets")
+    # Prepare log file for minimap2
+    logFile = f"{out_dir}/logs/rescue/minimap2.log"
+    os.makedirs(os.path.dirname(logFile), exist_ok=True)
 
+    # Run the command
+    run_command(minimap_cmd, rescue_logger, logFile, "Mapping rescue candidates to targets")
+
+    # Check output SAM file
     if os.path.isfile(sam_file):
         rescue_logger.info(f"Minimap2 results were saved to {sam_file}")
         rescue_logger.debug("minimap2 command used:")
         rescue_logger.debug(minimap_cmd)
 
-    # Filter mapping results (select SAM columns)
-    rescue_logger.info("Building candidate-target table of mapping hits...")
+        # Clean SAM header
+        clean_sam_header(sam_file, sam_file_clean)
 
-    process_sam_file(sam_file,out_dir,out_prefix)
-
-    rescue_logger.debug("Candidate-target mapping process has been executed successfully.")
-
+        # Process SAM file to create candidate-target mapping
+        rescue_logger.info("Building candidate-target table of mapping hits...")
+        process_sam_file(sam_file_clean, out_dir, out_prefix)
+    else:
+        rescue_logger.error(f"SAM file not found: {sam_file}")
+        sys.exit(1)
 
 ## Run rescue steps specific to rules filter
 def run_rules_rescue(filter_classification, reference_classification,
                      out_dir, out_prefix, json_filter):
     prefix = f"{out_dir}/{out_prefix}"
-    ## Run rules filter on reference transcriptome
     message("Rules rescue selected",rescue_logger)
     rescue_logger.info("Applying provided rules (--json_filter) to reference transcriptome classification file.")
 
@@ -210,67 +207,51 @@ def run_rules_rescue(filter_classification, reference_classification,
     ref_dir = f"{out_dir}/reference_rules_filter"
 
     FILTER_PATH = sqanti_path("sqanti3_filter.py")
-    # define command
     refRules_cmd = f"{PYTHONPATH} {FILTER_PATH} rules --sqanti_class {reference_classification} -j {json_filter} -o {ref_out} -d {ref_dir} --skip_report"
 
-    # print command
     logFile=f"{out_dir}/logs/refRules.log"
     run_command(refRules_cmd,rescue_logger,logFile,description="Run rules filter on reference transcriptome")
-        # make file names
+
     ref_rules = f"{out_dir}/reference_rules_filter/reference_RulesFilter_result_classification.txt"
 
-    ## run rescue-by-mapping
     rescue_logger.info("Running rescue-by-mapping for rules filter.")
 
-    # input file name
     mapping_hits = f"{prefix}_rescue_mapping_hits.tsv"
 
-    # define Rscript command with rescue_by_mapping_rules.R args
     rescue_cmd = f"{RSCRIPTPATH} {RSCRIPT_RESCUE_RULES} -c {filter_classification} \
     -o {out_prefix} -d {out_dir} -u {utilitiesPath} -m {mapping_hits} -r {ref_rules}"
+
     logFile=f"{out_dir}/logs/rescue_rules.log"
     run_command(rescue_cmd,rescue_logger,logFile,description="Run rescue by mapping")
 
     # expected output name
     rescued_file = f"{prefix}_full_inclusion_list.tsv"
     automatic_rescue_file = f"{prefix}_automatic_rescue_table.tsv"
-    # TODO: Find a way to run this part in python 
-    # print(mapping_hits, ref_rules, args.filter_class, automatic_rescue_file, f"{args.dir}/{args.output}")
-    # rescue_rules(mapping_hits, ref_rules, args.filter_class, automatic_rescue_file, f"{args.dir}/{args.output}")
-
 
 ## Run rescue steps specific to the ML filter
 def run_ML_rescue(filter_classification, reference_classification,
                   out_dir,out_prefix, random_forest, thr):
     prefix = f"{out_dir}/{out_prefix}"
-    ## run pre-trained ML classifier on reference transcriptome
     message("ML rescue selected!",rescue_logger)
     rescue_logger.info("Running pre-trained random forest on reference transcriptome classification file.")
     
-    # define Rscript command with run_randomforest_on_reference.R args
     refML_cmd = f"{RSCRIPTPATH} {RESCUE_RANDOM_FOREST} -c {reference_classification} -o {out_prefix} -d {out_dir} -r {random_forest}"
 
-    # print command
     rescue_logger.debug(refML_cmd)
-    # run R script via terminal
     logFile=f"{out_dir}/logs/refML.log"
     run_command(refML_cmd,rescue_logger,logFile,description="Run random forest on reference transcriptome")
-    # make expected output file name
+
     ref_isoform_predict = f"{prefix}_reference_isoform_predict.tsv"
 
     if os.path.isfile(ref_isoform_predict):
 
-        ## run rescue-by-mapping
         rescue_logger.info("Running rescue-by-mapping for ML filter.")
 
-        # input file name
         mapping_hits = f"{prefix}_rescue_mapping_hits.tsv"
 
-        # define Rscript command with rescue_by_mapping_ML.R args
         rescue_cmd = f"{RSCRIPTPATH} {RSCRIPT_RESCUE_ML} -c {filter_classification} -o {out_prefix} -d {out_dir} -u {utilitiesPath} -m {mapping_hits} -r {ref_isoform_predict} -j {thr}"
 
         logFile=f"{out_dir}/logs/rescue_by_mapping.log"
-        # run R script via terminal
         run_command(rescue_cmd,rescue_logger,logFile,description="Run rescue by mapping")
 
     else:
