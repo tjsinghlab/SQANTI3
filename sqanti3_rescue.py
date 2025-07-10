@@ -6,10 +6,13 @@ __author__  = "angeles.arzalluz@gmail.com"
 ###################################################
 
 #### PREPARATION ####
-
+from src.utilities.clean_sam_header import clean_sam_header
 ## Module import
 import os
 import sys
+# SAFELY create all necessary log directories
+out_dir = "/gpfs/commons/groups/singh_lab/users/pmaddhesiya/NEXTFLOW/Testing_nf/output/Sqanti3_output/test"
+os.makedirs(os.path.join(out_dir, "logs"), exist_ok=True)
 
 from src.rescue_argparse import rescue_argparse
 from src.module_logging import rescue_logger, message, update_logger
