@@ -65,11 +65,7 @@ def run_automatic_rescue(classification_file,monoexons,mode,prefix):
     # Save the automatic rescue
     save_automatic_rescue(rescue_auto,rescue_classif,mode,prefix)
 
-<<<<<<< HEAD
 def rescue_candidates(classification_file, monoexons, prefix):
-=======
-def rescue_candidates(classification_file,monoexons,prefix):
->>>>>>> origin/master
     """
     Selection of rescue candidates from non-FSM artifacts.
     The ISM artifacts are selected if they are not associated with a FSM artifact already (they have already been rescued)
@@ -99,7 +95,6 @@ def rescue_candidates(classification_file,monoexons,prefix):
         )
     ]
 
-<<<<<<< HEAD
     # ✅ NEW: Filter monoexonic transcripts if requested
     if monoexons != 'all':
         if not rescue_candidates.empty and 'exons' in rescue_candidates.columns:
@@ -114,18 +109,6 @@ def rescue_candidates(classification_file,monoexons,prefix):
 
     return rescue_candidates["isoform"].tolist()
 
-=======
-    if monoexons != 'all':
-        rescue_novel = rescue_novel[rescue_novel['exons'] > 1]
-    
-    # Write rescue candidates
-    rescue_candidates.to_csv(f"{prefix}_rescue_candidates.tsv", 
-                            sep="\t",
-                            index=False)
-
-    return rescue_candidates["isoform"].tolist()
-    
->>>>>>> origin/master
 def rescue_targets(classification_file,rescue_candidates,ref_gtf,prefix):
     # Load classification
     classif_df = read_classification(classification_file)

@@ -98,11 +98,7 @@ def run_td2(corrFASTA, orf_input,threads):
     td2_path = os.path.join(sqanti_path, "TD2")
 
     # First we run the ORF search
-<<<<<<< HEAD
     search_cmd = f"TD2.LongOrfs -t {corrFASTA} -O {td2_path} -S"
-=======
-    search_cmd = f"TD2.LongOrfs -t {corrFASTA} -O {td2_path} -S --threads {threads}"
->>>>>>> origin/master
     logFile = f"{sqanti_path}/logs/TD2_LongOrfs.log"
     run_command(search_cmd, qc_logger, logFile, description="TD2 ORF search")
 
